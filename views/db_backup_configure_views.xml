@@ -143,7 +143,7 @@
                             <field name="aws_access_key"
                                    invisible="backup_destination != 'amazon_s3'"/>
                             <field name="aws_secret_access_key"
-                                   invisible="backup_destination != 'amazon_s3'"/>
+                                   invisible="backup_destination != 'amazon_s3'" password="True"/>
                             <field name="s3_endpoint_url" 
                                    invisible="backup_destination != 'amazon_s3'"
                                    placeholder="e.g. https://nyc3.digitaloceanspaces.com"/>
