@@ -207,17 +207,25 @@ class DbBackupConfigure(models.Model):
     aws_folder_name = fields.Char(string='File Name',
                                   help="field used to store the name of a"
                                        " folder in an Amazon S3 bucket.")
+    s3_endpoint_url = fields.Char(string='S3 Endpoint URL', 
+                                    help="Optional endpoint URL for S3-compatible storage (e.g., https://nyc3.digitaloceanspaces.com). Leave empty for Amazon S3.")
 
     def action_s3cloud(self):
         """If it has aws_secret_access_key, which will perform s3cloud
          operations for connection test"""
         if self.aws_access_key and self.aws_secret_access_key:
             try:
-                s3_client = boto3.client(
-                    's3',
-                    aws_access_key_id=self.aws_access_key,
-                    aws_secret_access_key=self.aws_secret_access_key
-                )
+                s3_client_params = {
+                    'service_name': 's3',
+                    'aws_access_key_id': self.aws_access_key,
+                    'aws_secret_access_key': self.aws_secret_access_key
+                }
+
+                # Add the endpoint URL if it's provided
+                if self.s3_endpoint_url:
+                    s3_client_params['endpoint_url'] = self.s3_endpoint_url
+
+                s3_client = boto3.client(**s3_client_params)
                 response = s3_client.head_bucket(Bucket=self.bucket_file_name)
                 if response['ResponseMetadata']['HTTPStatusCode'] == 200:
                     self.active = self.hide_active = True
@@ -248,6 +256,7 @@ class DbBackupConfigure(models.Model):
                         'sticky': False,
                     }
                 }
+
 
     def action_nextcloud(self):
         """If it has next_cloud_password, domain, and next_cloud_user_name
@@ -916,14 +925,21 @@ class DbBackupConfigure(models.Model):
             elif rec.backup_destination == 'amazon_s3':
                 if rec.aws_access_key and rec.aws_secret_access_key:
                     try:
-                        # Create a boto3 client for Amazon S3 with provided
-                        # access key id and secret access key
-                        bo3 = boto3.client(
-                            's3',
-                            aws_access_key_id=rec.aws_access_key,
-                            aws_secret_access_key=rec.aws_secret_access_key)
-                        # If auto_remove is enabled, remove the backups that
-                        # are older than specified days from the S3 bucket
+                        # Create boto3 client parameters
+                        s3_client_params = {
+                            'service_name': 's3',
+                            'aws_access_key_id': rec.aws_access_key,
+                            'aws_secret_access_key': rec.aws_secret_access_key
+                        }
+                        
+                        # Add the endpoint URL if it's provided
+                        if rec.s3_endpoint_url:
+                            s3_client_params['endpoint_url'] = rec.s3_endpoint_url
+                            
+                        # Create the boto3 client with the appropriate parameters
+                        bo3 = boto3.client(**s3_client_params)
+                        
+                        # If auto_remove is enabled, remove backups that are older than specified days
                         if rec.auto_remove:
                             folder_path = rec.aws_folder_name
                             response = bo3.list_objects(
@@ -939,17 +955,26 @@ class DbBackupConfigure(models.Model):
                                     bo3.delete_object(
                                         Bucket=rec.bucket_file_name,
                                         Key=file_path)
-                        # Create a boto3 resource for Amazon S3 with provided
-                        # access key id and secret access key
-                        s3 = boto3.resource(
-                            's3',
-                            aws_access_key_id=rec.aws_access_key,
-                            aws_secret_access_key=rec.aws_secret_access_key)
-                        # Create a folder in the specified bucket, if it
-                        # doesn't already exist
+                                        
+                        # Create boto3 resource parameters
+                        s3_resource_params = {
+                            'service_name': 's3',
+                            'aws_access_key_id': rec.aws_access_key,
+                            'aws_secret_access_key': rec.aws_secret_access_key
+                        }
+                        
+                        # Add the endpoint URL if it's provided
+                        if rec.s3_endpoint_url:
+                            s3_resource_params['endpoint_url'] = rec.s3_endpoint_url
+                            
+                        # Create the boto3 resource with the appropriate parameters
+                        s3 = boto3.resource(**s3_resource_params)
+                        
+                        # Create a folder in the specified bucket if it doesn't already exist
                         s3.Object(rec.bucket_file_name,
                                   rec.aws_folder_name + '/').put()
                         bucket = s3.Bucket(rec.bucket_file_name)
+                        
                         # Get all the prefixes in the bucket
                         prefixes = set()
                         for obj in bucket.objects.all():
@@ -957,33 +982,28 @@ class DbBackupConfigure(models.Model):
                             if key.endswith('/'):
                                 prefix = key[:-1]  # Remove the trailing slash
                                 prefixes.add(prefix)
-                        # If the specified folder is present in the bucket,
-                        # take a backup of the database and upload it to the
-                        # S3 bucket
+                                
+                        # If the specified folder is present in the bucket, back up the database
                         if rec.aws_folder_name in prefixes:
                             temp = tempfile.NamedTemporaryFile(
                                 suffix='.%s' % rec.backup_format)
                             with open(temp.name, "wb+") as tmp:
                                 self.dump_data(rec.db_name, tmp,
-                                                        rec.backup_format, rec.backup_frequency)
+                                            rec.backup_format, rec.backup_frequency)
                             backup_file_name = temp.name
                             remote_file_path = f"{rec.aws_folder_name}/{rec.db_name}_" \
                                                f"{backup_time}.{rec.backup_format}"
                             s3.Object(rec.bucket_file_name,
                                       remote_file_path).upload_file(
                                 backup_file_name)
-                            # If notify_user is enabled, send an email to the
-                            # user notifying them about the successful backup
+                                
+                            # Send notification if enabled
                             if rec.notify_user:
                                 mail_template_success.send_mail(rec.id,
                                                                 force_send=True)
                     except Exception as error:
-                        # If any error occurs, set the 'generated_exception'
-                        # field to the error message and log the error
                         rec.generated_exception = error
-                        _logger.info('Amazon S3 Exception: %s', error)
-                        # If notify_user is enabled, email the user
-                        # notifying them about the failed backup
+                        _logger.info('S3 Storage Exception: %s', error)
                         if rec.notify_user:
                             mail_template_failed.send_mail(rec.id, force_send=True)
 
