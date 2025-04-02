@@ -941,21 +941,31 @@ class DbBackupConfigure(models.Model):
                         
                         # If auto_remove is enabled, remove backups that are older than specified days
                         if rec.auto_remove:
-                            folder_path = rec.aws_folder_name
-                            response = bo3.list_objects(
-                                Bucket=rec.bucket_file_name,
-                                Prefix=folder_path)
-                            today = fields.date.today()
-                            for file in response['Contents']:
-                                file_path = file['Key']
-                                last_modified = file['LastModified']
-                                date = last_modified.date()
-                                age_in_days = (today - date).days
-                                if age_in_days >= rec.days_to_remove:
-                                    bo3.delete_object(
-                                        Bucket=rec.bucket_file_name,
-                                        Key=file_path)
-                                        
+                            try:
+                                folder_path = rec.aws_folder_name
+                                response = bo3.list_objects(
+                                    Bucket=rec.bucket_file_name,
+                                    Prefix=folder_path)
+
+                                # Check if 'Contents' exists in the response
+                                if 'Contents' in response:
+                                    today = fields.date.today()
+                                    for file in response['Contents']:
+                                        try:
+                                            file_path = file['Key']
+                                            last_modified = file['LastModified']
+                                            date = last_modified.date()
+                                            age_in_days = (today - date).days
+                                            if age_in_days >= rec.days_to_remove:
+                                                bo3.delete_object(
+                                                    Bucket=rec.bucket_file_name,
+                                                    Key=file_path)
+                                        except Exception as delete_error:
+                                            _logger.error('Error deleting file %s: %s', file_path, delete_error)
+                            except Exception as list_error:
+                                _logger.error('Error listing objects for cleanup: %s', list_error)
+                                # Continue with backup process even if cleanup fails
+
                         # Create boto3 resource parameters
                         s3_resource_params = {
                             'service_name': 's3',
